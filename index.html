@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Leaflet GeoJSON/KML Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.filelayer/1.1.2/leaflet.filelayer.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/terraformer/1.0.10/terraformer.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/terraformer-arcgis-parser/1.0.6/terraformer-arcgis-parser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <style>
+    #map {
+      height: 600px;
+    }
+    .error-message {
+      color: red;
+    }
+  </style>
+</head>
+<body>
+  <h2>Leaflet GeoJSON Viewer</h2>
+  <div id="map"></div>
+  <input type="file" id="fileInput" accept=".geojson,.kml" />
+  <button id="saveBtn">Save Polygons</button>
+  <div id="uploadStatus" style="display:none;"></div>
+
+  <script>
+    const map = L.map('map').setView([23.0225, 72.5714], 13);
+    const geojsonLayer = L.geoJson().addTo(map);
+    let geojsonData;
+
+    // Add OpenStreetMap tile layer
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    // Handle file upload
+    document.getElementById('fileInput').addEventListener('change', async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const content = e.target.result;
+        if (file.name.endsWith('.geojson')) {
+          processGeoJSON(content);
+        } else if (file.name.endsWith('.kml')) {
+          processKML(content);
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    function processGeoJSON(content) {
+      try {
+        geojsonData = JSON.parse(content);
+        if (!geojsonData.features || geojsonData.features.length === 0) {
+          throw new Error('No features found in the uploaded file.');
+        }
+        swapCoordinates(geojsonData);
+        loadGeoJSON(geojsonData);
+      } catch (error) {
+        alert(`Error processing GeoJSON file: ${error.message}`);
+      }
+    }
+
+    function processKML(content) {
+      try {
+        const parser = new DOMParser();
+        const kml = parser.parseFromString(content, 'text/xml');
+        const converted = toGeoJSON.kml(kml);
+        geojsonData = converted;
+        if (!geojsonData.features || geojsonData.features.length === 0) {
+          throw new Error('No features found in the uploaded file.');
+        }
+        swapCoordinates(geojsonData);
+        loadGeoJSON(geojsonData);
+      } catch (error) {
+        alert(`Error processing KML file: ${error.message}`);
+      }
+    }
+
+    function swapCoordinates(data) {
+      data.features.forEach((feature) => {
+        if (feature.geometry && feature.geometry.type === 'Polygon') {
+          feature.geometry.coordinates = feature.geometry.coordinates.map(ring =>
+            ring.map(([lng, lat]) => [lat, lng])
+          );
+        }
+      });
+    }
+
+    function revertCoordinates(data) {
+      data.features.forEach((feature) => {
+        if (feature.geometry && feature.geometry.type === 'Polygon') {
+          feature.geometry.coordinates = feature.geometry.coordinates.map(ring =>
+            ring.map(([lat, lng]) => [lng, lat])
+          );
+        }
+      });
+    }
+
+    function loadGeoJSON(data) {
+      geojsonLayer.clearLayers();
+      geojsonLayer.addData(data);
+      geojsonLayer.eachLayer((layer) => {
+        if (layer.feature.properties.color) {
+          layer.setStyle({ color: layer.feature.properties.color });
+        }
+      });
+      if (geojsonLayer.getBounds().isValid()) {
+        map.fitBounds(geojsonLayer.getBounds());
+      } else {
+        alert('Unable to determine the bounds of the polygons.');
+      }
+    }
+
+    function calculatePolygonArea(coordinates) {
+      // This function calculates the area of a polygon in square meters
+      return 0; // Placeholder for area calculation logic
+    }
+
+    // Save polygons to API
+    const saveBtn = document.getElementById('saveBtn');
+    const uploadStatus = document.getElementById('uploadStatus');
+
+    saveBtn.addEventListener('click', async () => {
+      if (!geojsonData) {
+        uploadStatus.innerHTML = '<span class="error-message">No data to save!</span>';
+        uploadStatus.style.display = 'block';
+        return;
+      }
+
+      // Revert coordinates to original format before sending to API
+      const geojsonCopy = JSON.parse(JSON.stringify(geojsonData));
+      revertCoordinates(geojsonCopy);
+
+      const polygons = geojsonCopy.features.map((feature) => ({
+        coordinates: feature.geometry.coordinates,
+        description: feature.properties?.description || 'No description',
+        color: feature.properties?.color || '#FF0000',
+        area: calculatePolygonArea(feature.geometry.coordinates),
+        date: new Date(),
+        reviews: [],
+        likes: 0,
+        name: feature.properties?.name || 'Anonymous',
+        email: feature.properties?.email || 'example@example.com',
+        tag: feature.properties?.tag || 'none',
+      }));
+
+      try {
+        for (const polygon of polygons) {
+          await axios.post('https://geomesh-back.onrender.com/api/polygon', polygon);
+        }
+        uploadStatus.textContent = 'Polygons saved successfully!';
+        uploadStatus.style.display = 'block';
+        saveBtn.disabled = true; // Disable the button after saving
+      } catch (err) {
+        uploadStatus.innerHTML = `<span class="error-message">Error saving polygons: ${err.message}</span>`;
+        uploadStatus.style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>
