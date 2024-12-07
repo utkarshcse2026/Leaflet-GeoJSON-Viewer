@@ -103,11 +103,28 @@
     function loadGeoJSON(data) {
       geojsonLayer.clearLayers();
       geojsonLayer.addData(data);
+
       geojsonLayer.eachLayer((layer) => {
+        // Set styles based on GeoJSON properties
         if (layer.feature.properties.color) {
           layer.setStyle({ color: layer.feature.properties.color });
         }
+
+        // Bind a tooltip to display properties on hover
+        const properties = layer.feature.properties;
+        const tooltipContent = `
+          <b>Name:</b> ${properties.name || 'N/A'}<br>
+          <b>Description:</b> ${properties.description || 'N/A'}<br>
+          <b>Tag:</b> ${properties.tag || 'N/A'}
+        `;
+
+        layer.bindTooltip(tooltipContent, {
+          sticky: true, // Keeps the tooltip near the cursor
+          direction: "top", // Position the tooltip above the cursor
+          offset: [0, -10], // Slight offset for better visibility
+        });
       });
+
       if (geojsonLayer.getBounds().isValid()) {
         map.fitBounds(geojsonLayer.getBounds());
       } else {
